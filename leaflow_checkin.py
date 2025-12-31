@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Leaflow 多账号自动签到 + 自动重启节点脚本
+Leaflow 多账号自动签到脚本
 变量名：LEAFLOW_ACCOUNTS
 变量值：邮箱1:密码1,邮箱2:密码2,邮箱3:密码3
 """
@@ -35,7 +35,7 @@ class LeaflowAutoCheckin:
         self.setup_driver()
     
     def setup_driver(self):
-        """设置Chrome驱动选项 - 保持原样以通过检测"""
+        """设置Chrome驱动选项"""
         chrome_options = Options()
         
         # GitHub Actions环境配置
@@ -46,13 +46,12 @@ class LeaflowAutoCheckin:
             chrome_options.add_argument('--disable-gpu')
             chrome_options.add_argument('--window-size=1920,1080')
         
-        # 通用配置 - 反爬虫关键配置
+        # 通用配置
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
         
         self.driver = webdriver.Chrome(options=chrome_options)
-        # 关键JS注入，防止被检测为WebDriver
         self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         
     def close_popup(self):
@@ -89,7 +88,7 @@ class LeaflowAutoCheckin:
         )
     
     def login(self):
-        """执行登录流程 - 保持原有复杂逻辑"""
+        """执行登录流程"""
         logger.info(f"开始登录流程")
         
         # 访问登录页面
@@ -159,7 +158,7 @@ class LeaflowAutoCheckin:
             logger.info("密码输入完成")
             time.sleep(1)
             
-        except Exception:
+        except TimeoutException:
             raise Exception("找不到密码输入框")
         
         # 点击登录按钮
@@ -208,7 +207,7 @@ class LeaflowAutoCheckin:
             else:
                 raise Exception("登录后未跳转到正确页面")
                 
-        except Exception:
+        except TimeoutException:
             # 检查是否登录失败
             try:
                 error_selectors = [".error", ".alert-danger", "[class*='error']", "[class*='danger']"]
@@ -446,68 +445,7 @@ class LeaflowAutoCheckin:
             
         except Exception as e:
             return f"获取签到结果时出错: {str(e)}"
-
-    # ==========================================
-    # [新增] 自动重启节点方法 (修复版：放宽检测条件)
-    # ==========================================
-    def restart_node(self):
-        """查找已部署的应用并重启"""
-        logger.info("✅ 签到流程结束，准备检查并重启节点...")
-        try:
-            self.driver.get("https://leaflow.net/deployments")
-            # 多给一点时间加载列表，防止列表是空白的
-            time.sleep(8)
-            
-            logger.info("正在扫描应用列表...")
-            
-            # 1. 寻找应用链接：不再使用严格的长度判断，而是遍历所有链接
-            found_app_url = None
-            try:
-                # 找出所有包含 /deployments/ 的链接
-                elements = self.driver.find_elements(By.XPATH, "//a[contains(@href, '/deployments/')]")
-                
-                for element in elements:
-                    href = element.get_attribute("href")
-                    # 排除掉列表页本身(leaflow.net/deployments) 和 创建按钮(create)
-                    if href and "create" not in href and href.rstrip('/') != "https://leaflow.net/deployments":
-                        found_app_url = href
-                        break # 找到第一个就停止
-                
-                if found_app_url:
-                    logger.info(f"发现应用: {found_app_url}")
-                    
-                    # 2. 进入应用详情
-                    self.driver.get(found_app_url)
-                    
-                    # 3. 点击重启按钮
-                    logger.info("寻找重启按钮...")
-                    restart_btn = WebDriverWait(self.driver, 10).until(
-                        EC.element_to_be_clickable((By.XPATH, "//*[text()='重启']"))
-                    )
-                    restart_btn.click()
-                    
-                    # 4. 点击确认弹窗
-                    logger.info("等待确认弹窗...")
-                    confirm_btn = WebDriverWait(self.driver, 10).until(
-                        EC.element_to_be_clickable((By.XPATH, "//*[text()='确认重启']"))
-                    )
-                    confirm_btn.click()
-                    
-                    time.sleep(3)
-                    logger.info("重启指令已发送")
-                    return "✅ 节点重启指令已发送"
-                else:
-                    logger.info("未检测到有效应用链接 (列表可能为空)")
-                    return "⚠️ 无应用或检测不到"
-                
-            except Exception as e:
-                logger.warning(f"扫描应用列表时出错: {e}")
-                return "⚠️ 扫描应用出错"
-                
-        except Exception as e:
-            logger.error(f"重启过程出错: {e}")
-            return f"❌ 重启失败: {str(e)}"
-
+    
     def run(self):
         """单个账号执行流程"""
         try:
@@ -521,21 +459,15 @@ class LeaflowAutoCheckin:
                 # 获取余额
                 balance = self.get_balance()
                 
-                # [新增] 执行重启
-                restart_result = self.restart_node()
-                
-                logger.info(f"签到结果: {result}, 余额: {balance}, 重启: {restart_result}")
-                
-                # 返回4个值 (成功状态, 签到结果, 余额, 重启结果)
-                return True, result, balance, restart_result
+                logger.info(f"签到结果: {result}, 余额: {balance}")
+                return True, result, balance
             else:
                 raise Exception("登录失败")
                 
         except Exception as e:
             error_msg = f"自动签到失败: {str(e)}"
             logger.error(error_msg)
-            # 失败时也返回4个值，保持格式统一
-            return False, error_msg, "未知", "未执行"
+            return False, error_msg, "未知"
         
         finally:
             if self.driver:
@@ -610,14 +542,14 @@ class MultiAccountManager:
         raise ValueError("未找到有效的账号配置")
     
     def send_notification(self, results):
-        """发送汇总通知到Telegram - [已更新支持重启状态]"""
+        """发送汇总通知到Telegram - 按照指定模板格式"""
         if not self.telegram_bot_token or not self.telegram_chat_id:
             logger.info("Telegram配置未设置，跳过通知")
             return
         
         try:
             # 构建通知消息
-            success_count = sum(1 for _, success, _, _, _ in results if success)
+            success_count = sum(1 for _, success, _, _ in results if success)
             total_count = len(results)
             current_date = datetime.now().strftime("%Y/%m/%d")
             
@@ -625,8 +557,7 @@ class MultiAccountManager:
             message += f"📊 成功: {success_count}/{total_count}\n"
             message += f"📅 签到时间：{current_date}\n\n"
             
-            # [更新] 这里的解包增加了 restart_result
-            for email, success, result, balance, restart_result in results:
+            for email, success, result, balance in results:
                 # 隐藏邮箱部分字符以保护隐私
                 masked_email = email[:3] + "***" + email[email.find("@"):]
                 
@@ -634,8 +565,7 @@ class MultiAccountManager:
                     status = "✅"
                     message += f"账号：{masked_email}\n"
                     message += f"{status}  {result}！\n"
-                    message += f"💰  当前总余额：{balance}。\n"
-                    message += f"🔄  {restart_result}\n\n"
+                    message += f"💰  当前总余额：{balance}。\n\n"
                 else:
                     status = "❌"
                     message += f"账号：{masked_email}\n"
@@ -668,10 +598,8 @@ class MultiAccountManager:
             
             try:
                 auto_checkin = LeaflowAutoCheckin(account['email'], account['password'])
-                # [更新] 获取4个返回值
-                success, result, balance, restart_result = auto_checkin.run()
-                # [更新] 存入 results 列表
-                results.append((account['email'], success, result, balance, restart_result))
+                success, result, balance = auto_checkin.run()
+                results.append((account['email'], success, result, balance))
                 
                 # 在账号之间添加间隔，避免请求过于频繁
                 if i < len(self.accounts):
@@ -682,14 +610,13 @@ class MultiAccountManager:
             except Exception as e:
                 error_msg = f"处理账号时发生异常: {str(e)}"
                 logger.error(error_msg)
-                # 异常情况也要补齐tuple长度
-                results.append((account['email'], False, error_msg, "未知", "未执行"))
+                results.append((account['email'], False, error_msg, "未知"))
         
         # 发送汇总通知
         self.send_notification(results)
         
         # 返回总体结果
-        success_count = sum(1 for _, success, _, _, _ in results if success)
+        success_count = sum(1 for _, success, _, _ in results if success)
         return success_count == len(self.accounts), results
 
 def main():
@@ -702,7 +629,7 @@ def main():
             logger.info("✅ 所有账号签到成功")
             exit(0)
         else:
-            success_count = sum(1 for _, success, _, _, _ in detailed_results if success)
+            success_count = sum(1 for _, success, _, _ in detailed_results if success)
             logger.warning(f"⚠️ 部分账号签到失败: {success_count}/{len(detailed_results)} 成功")
             # 即使有失败，也不退出错误状态，因为可能部分成功
             exit(0)
