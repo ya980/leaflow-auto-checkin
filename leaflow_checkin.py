@@ -448,50 +448,61 @@ class LeaflowAutoCheckin:
             return f"获取签到结果时出错: {str(e)}"
 
     # ==========================================
-    # [新增] 自动重启节点方法
+    # [新增] 自动重启节点方法 (修复版：放宽检测条件)
     # ==========================================
     def restart_node(self):
-        """查找已部署的应用并重启 (新增功能)"""
+        """查找已部署的应用并重启"""
         logger.info("✅ 签到流程结束，准备检查并重启节点...")
         try:
             self.driver.get("https://leaflow.net/deployments")
-            time.sleep(3)
+            # 多给一点时间加载列表，防止列表是空白的
+            time.sleep(8)
             
-            # 1. 寻找有效的应用链接 (排除 create 按钮)
+            logger.info("正在扫描应用列表...")
+            
+            # 1. 寻找应用链接：不再使用严格的长度判断，而是遍历所有链接
+            found_app_url = None
             try:
-                valid_app_link = WebDriverWait(self.driver, 5).until(
-                    EC.presence_of_element_located((
-                        By.XPATH, 
-                        "//a[contains(@href, '/deployments/') and not(contains(@href, 'create')) and string-length(@href) > 14]"
-                    ))
-                )
-                app_url = valid_app_link.get_attribute("href")
-                logger.info(f"发现应用: {app_url}")
+                # 找出所有包含 /deployments/ 的链接
+                elements = self.driver.find_elements(By.XPATH, "//a[contains(@href, '/deployments/')]")
                 
-                # 2. 进入应用详情
-                self.driver.get(app_url)
+                for element in elements:
+                    href = element.get_attribute("href")
+                    # 排除掉列表页本身(leaflow.net/deployments) 和 创建按钮(create)
+                    if href and "create" not in href and href.rstrip('/') != "https://leaflow.net/deployments":
+                        found_app_url = href
+                        break # 找到第一个就停止
                 
-                # 3. 点击重启按钮
-                logger.info("寻找重启按钮...")
-                restart_btn = WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable((By.XPATH, "//*[text()='重启']"))
-                )
-                restart_btn.click()
+                if found_app_url:
+                    logger.info(f"发现应用: {found_app_url}")
+                    
+                    # 2. 进入应用详情
+                    self.driver.get(found_app_url)
+                    
+                    # 3. 点击重启按钮
+                    logger.info("寻找重启按钮...")
+                    restart_btn = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable((By.XPATH, "//*[text()='重启']"))
+                    )
+                    restart_btn.click()
+                    
+                    # 4. 点击确认弹窗
+                    logger.info("等待确认弹窗...")
+                    confirm_btn = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable((By.XPATH, "//*[text()='确认重启']"))
+                    )
+                    confirm_btn.click()
+                    
+                    time.sleep(3)
+                    logger.info("重启指令已发送")
+                    return "✅ 节点重启指令已发送"
+                else:
+                    logger.info("未检测到有效应用链接 (列表可能为空)")
+                    return "⚠️ 无应用或检测不到"
                 
-                # 4. 点击确认弹窗
-                logger.info("等待确认弹窗...")
-                confirm_btn = WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable((By.XPATH, "//*[text()='确认重启']"))
-                )
-                confirm_btn.click()
-                
-                time.sleep(3)
-                logger.info("重启指令已发送")
-                return "✅ 节点重启指令已发送"
-                
-            except Exception:
-                logger.warning("未找到可重启的应用或超时")
-                return "⚠️ 无应用或重启跳过"
+            except Exception as e:
+                logger.warning(f"扫描应用列表时出错: {e}")
+                return "⚠️ 扫描应用出错"
                 
         except Exception as e:
             logger.error(f"重启过程出错: {e}")
